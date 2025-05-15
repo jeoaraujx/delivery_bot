@@ -2,7 +2,6 @@ import pygame
 import random
 import heapq
 import sys
-import argparse
 from abc import ABC, abstractmethod
 
 
@@ -16,6 +15,7 @@ class BasePlayer(ABC):
         self.battery = max_battery
         self.score = 0
         self.cargo = []
+        self.delivered_packages = []
 
     @abstractmethod
     def move_to(self, new_pos):
@@ -60,38 +60,80 @@ class DefaultPlayer(BasePlayer):
         return False
 
     def deliver_packages(self, goal_positions):
-        delivered = [p for p in self.cargo if p in goal_positions]
-        self.cargo = [p for p in self.cargo if p not in goal_positions]
-        self.score += 50 * len(delivered)
-        return delivered
+        """Entrega os pacotes que estão nas posições de entrega especificadas"""
+        self.delivered_packages.append(self.cargo)
+        self.score += 50
+        return self.delivered_packages
 
     def escolher_alvo(self, world):
-        sx, sy = self.position
+        current_pos = tuple(self.position)
 
-        # Se a carga for maior que 30 e ele tiver carga suficiente, prioriza buscar outro pacote
-        if self.cargo and self.battery > 40:
-            if world.packages:  # Verifica se há pacotes disponíveis
-                return min(
-                    world.packages, key=lambda pkg: abs(pkg[0] - sx) + abs(pkg[1] - sy)
-                )
+        maze = world.maze
 
-        # Se a bateria estiver muito baixa e houver estação de recarga, vai até a estação
-        if self.battery <= 30 and world.recharger:
-            return world.recharger
+        def caminho_valido(alvo):
+            return len(maze.astar(current_pos, tuple(alvo))) > 0
 
-        # Se o robô tiver pacotes e houver metas de entrega, ele irá para a meta mais próxima
-        if self.cargo and world.goals:
-            return min(
-                world.goals, key=lambda goal: abs(goal[0] - sx) + abs(goal[1] - sy)
-            )
+        def distancia_para(alvo):
+            return maze.heuristic(current_pos, tuple(alvo))
 
-        # Se o robô não tem carga, ele buscará o pacote mais próximo
-        if not self.cargo and world.packages:
-            return min(
-                world.packages, key=lambda pkg: abs(pkg[0] - sx) + abs(pkg[1] - sy)
-            )
+        # Se tiver pacotes na carga - Prioridade Máxima
+        if self.cargo:
+            # 1. Tentar entregar primeiro
+            entregas_validas = [g for g in world.goals if caminho_valido(g)]
 
-        # Se não houver pacotes, metas ou recarga disponível, o jogo termina
+            if entregas_validas:
+                # Encontra a entrega mais próxima
+                entrega = min(entregas_validas, key=lambda g: distancia_para(g))
+                dist_entrega = distancia_para(entrega)
+
+                # Verifica se tem energia para entrega + margem de segurança
+                if (
+                    self.battery >= dist_entrega + 10
+                ):  # Reserva 10 unidades para emergências
+                    return entrega
+
+                # Se não tem energia suficiente, verifica se pode recarregar antes
+                elif world.recharger and caminho_valido(world.recharger):
+                    dist_recarga = distancia_para(world.recharger)
+                    if self.battery >= dist_recarga:
+                        return world.recharger
+
+            # 2. Se não pode entregar, tenta recarregar
+            if world.recharger and caminho_valido(world.recharger):
+                dist_recarga = distancia_para(world.recharger)
+                if self.battery >= dist_recarga:
+                    return world.recharger
+
+            # 3. Se não pode fazer nada, fica parado
+            return list(current_pos)
+        # Se não tiver pacotes - Prioridade de coleta
+        if world.packages:
+            pacotes_validos = [p for p in world.packages if caminho_valido(p)]
+
+            if pacotes_validos:
+                pacote = min(pacotes_validos, key=lambda p: distancia_para(p))
+                dist_pacote = distancia_para(pacote)
+
+                # Calcula energia necessária: ir até o pacote + possível entrega
+                energia_necessaria = dist_pacote + 20  # Margem para entrega futura
+
+                if self.battery >= energia_necessaria:
+                    return pacote
+
+                # Se não tem energia, verifica recarga
+                elif world.recharger and caminho_valido(world.recharger):
+                    dist_recarga = distancia_para(world.recharger)
+                    if self.battery >= dist_recarga:
+                        return world.recharger
+
+            return list(current_pos)  # Fica parado se não puder coletar
+
+        # Recarga emergencial (bateria <= 30%)
+        if self.battery <= 30 and world.recharger and caminho_valido(world.recharger):
+            dist_recarga = distancia_para(world.recharger)
+            if self.battery >= dist_recarga:
+                return world.recharger
+
         return None
 
 
@@ -102,7 +144,8 @@ class World:
     def __init__(self, seed=None):
         if seed is not None:
             random.seed(seed)
-        # Parâmetros do grid e janela
+        # Removida a referência ao Maze aqui
+        self.maze = None  # Será definido posteriormente
         self.maze_size = 30
         self.width = 600
         self.height = 600
@@ -121,12 +164,12 @@ class World:
                     self.walls.append((col, row))
 
         # Número total de itens (pacotes) a serem entregues
-        self.total_items = 4
+        self.total_items = 5
 
         # Geração dos locais de coleta (pacotes)
         self.packages = []
         # Aqui geramos 5 locais para coleta, garantindo uma opção extra
-        while len(self.packages) < self.total_items + 1:
+        while len(self.packages) < self.total_items:
             x = random.randint(0, self.maze_size - 1)
             y = random.randint(0, self.maze_size - 1)
             if self.map[y][x] == 0 and [x, y] not in self.packages:
@@ -299,10 +342,12 @@ class World:
 class Maze:
     def __init__(self, seed=None):
         self.world = World(seed)
+        # Agora conectamos o Maze ao World depois de criado
+        self.world.maze = self  # Esta é a linha crucial que faltava
         self.running = True
         self.score = 0
         self.steps = 0
-        self.delay = 100  # milcleaissegundos entre movimentos
+        self.delay = 100
         self.path = []
         self.num_deliveries = 0  # contagem de entregas realizadas
 
@@ -378,7 +423,7 @@ class Maze:
 
             self.path = self.astar(self.world.player.position, target)
             if not self.path:
-                print("Nenhum caminho encontrado para o alvo", target)
+                print("[[Nenhum caminho encontrado para o alvo]]", target)
                 self.running = False
                 break
 
@@ -388,7 +433,7 @@ class Maze:
 
                 if self.world.recharger and pos == self.world.recharger:
                     self.world.player.recharge()
-                    print("Bateria recarregada!")
+                    print("[[Bateria recarregada!]]")
 
                 self.world.draw_world(self.path)
                 pygame.time.wait(self.delay)
@@ -398,26 +443,28 @@ class Maze:
                     if self.world.player.pick_package(target):
                         self.world.packages.remove(target)
                         print(
-                            f"Pacote coletado em {target}. Cargo: {len(self.world.player.cargo)}"
+                            f"\n[Pacote coletado em {target}. Cargo: {len(self.world.player.cargo)}]"
                         )
 
                 elif target in self.world.goals:
                     entregues = self.world.player.deliver_packages([target])
+
+                    if entregues:
+                        self.num_deliveries += 1
+                        print(
+                            f"\n[{len(self.world.player.cargo)} pacote(s) entregue(s). Total: {self.num_deliveries}/{self.world.total_items}]"
+                        )
+                        self.world.player.cargo = []
+
                     if (
                         self.num_deliveries >= self.world.total_items
                         and not self.world.player.cargo
                     ):
                         self.running = False
-                    print(f"{len(entregues)} pacote(s) entregue(s) em {target}.")
 
             print(
-                f"Passos: {self.steps}, Pontuação: {self.world.player.score}, Cargo: {len(self.world.player.cargo)}, Bateria: {self.world.player.battery}, Entregas: {self.num_deliveries}"
+                f"\n[Passos: {self.steps}, Pontuação: {self.world.player.score}, Cargo: {len(self.world.player.cargo)}, Bateria: {self.world.player.battery}, Entregas: {self.num_deliveries}]"
             )
-
-        print("Fim de jogo!")
-        print("Pontuação final:", self.world.player.score)
-        print("Total de passos:", self.steps)
-        pygame.quit()
 
 
 # ==========================
@@ -435,17 +482,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # parser = argparse.ArgumentParser(
-    #     description="Delivery Bot: Navegue no grid, colete pacotes e realize entregas."
-    # )
-    # parser.add_argument(
-    #     "--seed",
-    #     type=int,
-    #     default=None,
-    #     help="Valor do seed para recriar o mesmo mundo (opcional).",
-    # )
-    # args = parser.parse_args()
-
-    # maze = Maze(seed=args.seed)
-    # maze.game_loop()
