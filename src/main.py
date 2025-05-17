@@ -119,37 +119,40 @@ class DefaultPlayer(BasePlayer):
             if melhor_entrega:
                 dist_entrega = distancia_real(melhor_entrega)
 
-                # Calcula bateria necessária: entrega + margem de segurança (10 unidades)
-                # ou entrega + caminho para recarregar
-                bateria_necessaria = dist_entrega
+                # Define a bateria necessária considerando diferentes cenários
+                bateria_necessaria = dist_entrega  # Mínimo para entregar
 
-                # Se tiver recarregador, calcula o caminho mais eficiente
+                # Cenário ideal: entregar E ainda recarregar depois
                 if world.recharger and caminho_valido(world.recharger):
-                    dist_recarga_pos_entrega = distancia_real(world.recharger)
-                    # Verifica se pode entregar e ainda chegar no recarregador
-                    if self.battery >= dist_entrega + dist_recarga_pos_entrega:
-                        return melhor_entrega
-                    # Se não conseguir, verifica se é melhor recarregar primeiro
-                    elif caminho_valido(world.recharger):
-                        dist_recarga = distancia_real(world.recharger)
-                        if self.battery >= dist_recarga:
-                            # Verifica se depois de recarregar pode fazer a entrega
-                            bateria_pos_recarga = self.max_battery - dist_recarga
-                            if bateria_pos_recarga >= dist_entrega:
-                                return world.recharger
+                    dist_para_recarga = distancia_real(world.recharger)
+                    bateria_necessaria = dist_entrega + dist_para_recarga
 
-                # Se não tem recarregador ou não pode usá-lo, verifica entrega direta
-                # com margem de segurança (10 unidades)
+                    # Pode fazer a entrega completa (entrega + recarga depois)?
+                    if self.battery >= bateria_necessaria:
+                        return melhor_entrega
+
+                # Cenário alternativo 1: entregar com margem de segurança (10 unidades)
                 if self.battery >= dist_entrega + 10:
                     return melhor_entrega
 
-                # Se não tem bateria para nada, tenta recarregar se possível
+                # Cenário alternativo 2: recarregar primeiro
                 if world.recharger and caminho_valido(world.recharger):
                     dist_recarga = distancia_real(world.recharger)
-                    if self.battery >= dist_recarga:
-                        return world.recharger
 
-            # Se não encontrou entrega válida ou não tem bateria, tenta recarregar
+                    # Verifica se pode chegar ao recarregador
+                    if self.battery >= dist_recarga:
+                        # Calcula bateria após recarga para ver se pode entregar depois
+                        bateria_pos_recarga = self.max_battery
+                        dist_apos_recarga = distancia_real(melhor_entrega)
+
+                        if bateria_pos_recarga >= dist_apos_recarga:
+                            return world.recharger
+
+                # Último recurso: tentar entregar mesmo com bateria mínima
+                if self.battery >= dist_entrega:
+                    return melhor_entrega
+
+            # Se não encontrou entrega válida ou não tem bateria suficiente
             if world.recharger and caminho_valido(world.recharger):
                 dist_recarga = distancia_real(world.recharger)
                 if self.battery >= dist_recarga:
