@@ -101,7 +101,7 @@ class DefaultPlayer(BasePlayer):
             # 2. Se não pode entregar, tenta recarregar
             if world.recharger and caminho_valido(world.recharger):
                 dist_recarga = distancia_para(world.recharger)
-                if self.battery >= dist_recarga:
+                if self.battery < 30:  # Se a bateria estiver abaixo de 30%
                     return world.recharger
 
             # 3. Se não pode fazer nada, fica parado
@@ -168,7 +168,7 @@ class World:
 
         # Geração dos locais de coleta (pacotes)
         self.packages = []
-        # Aqui geramos 5 locais para coleta, garantindo uma opção extra
+        # Aqui geramos 5 locais para coleta
         while len(self.packages) < self.total_items:
             x = random.randint(0, self.maze_size - 1)
             y = random.randint(0, self.maze_size - 1)
@@ -177,7 +177,7 @@ class World:
 
         # Geração dos locais de entrega (metas)
         self.goals = []
-        while len(self.goals) < self.total_items:
+        while len(self.goals) < self.total_items - 1:
             x = random.randint(0, self.maze_size - 1)
             y = random.randint(0, self.maze_size - 1)
             if (
