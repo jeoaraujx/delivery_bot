@@ -61,80 +61,101 @@ class DefaultPlayer(BasePlayer):
 
     def deliver_packages(self, goal_positions):
         """Entrega os pacotes que estão nas posições de entrega especificadas"""
-        self.delivered_packages.append(self.cargo)
-        self.score += 50
-        return self.delivered_packages
+        if self.position in goal_positions and self.cargo:
+            self.delivered_packages.extend(self.cargo)
+            self.score += 50 * len(self.cargo)
+            self.cargo = []
+            return True
+        return False
 
     def escolher_alvo(self, world):
         current_pos = tuple(self.position)
-
         maze = world.maze
 
         def caminho_valido(alvo):
             return len(maze.astar(current_pos, tuple(alvo))) > 0
 
-        def distancia_para(alvo):
-            return maze.heuristic(current_pos, tuple(alvo))
+        def distancia_real(alvo):
+            return len(maze.astar(current_pos, tuple(alvo)))
 
-        # Se tiver pacotes na carga - Prioridade Máxima
+        def melhor_alvo(alvos, prioridade):
+            alvos_validos = [a for a in alvos if caminho_valido(a)]
+            if not alvos_validos:
+                return None
+
+            # Calcula a pontuação potencial para cada alvo
+            alvos_com_pontuacao = []
+            for alvo in alvos_validos:
+                dist = distancia_real(alvo)
+                custo = dist
+                if prioridade == "entrega":
+                    ganho = 50 * len(self.cargo)
+                else:  # coleta
+                    ganho = 50  # potencial de entrega futura
+
+                # Considera a bateria necessária
+                if self.battery < dist:
+                    if world.recharger and caminho_valido(world.recharger):
+                        dist_recarga = distancia_real(world.recharger)
+                        if self.battery >= dist_recarga:
+                            custo = dist_recarga + distancia_real(alvo)
+                        else:
+                            continue  # não pode chegar
+                    else:
+                        continue  # não tem como recarregar
+
+                score_liquido = ganho - custo
+                alvos_com_pontuacao.append((score_liquido, dist, alvo))
+
+            if not alvos_com_pontuacao:
+                return None
+
+            # Ordena por maior pontuação líquida, depois menor distância
+            alvos_com_pontuacao.sort(key=lambda x: (-x[0], x[1]))
+            return alvos_com_pontuacao[0][2]
+
+        # 1. Se tiver pacotes, prioriza entregar
         if self.cargo:
-            # 1. Tentar entregar primeiro
-            entregas_validas = [g for g in world.goals if caminho_valido(g)]
+            melhor_entrega = melhor_alvo(world.goals, "entrega")
+            if melhor_entrega:
+                dist_entrega = distancia_real(melhor_entrega)
 
-            if entregas_validas:
-                # Encontra a entrega mais próxima
-                entrega = min(entregas_validas, key=lambda g: distancia_para(g))
-                dist_entrega = distancia_para(entrega)
-
-                # Verifica se tem energia para entrega + margem de segurança
-                if (
-                    self.battery >= dist_entrega + 10
-                ):  # Reserva 10 unidades para emergências
-                    return entrega
-
-                # Se não tem energia suficiente, verifica se pode recarregar antes
+                # Verifica se tem bateria suficiente
+                if self.battery >= dist_entrega:
+                    return melhor_entrega
+                # Se não tem bateria, tenta recarregar primeiro
                 elif world.recharger and caminho_valido(world.recharger):
-                    dist_recarga = distancia_para(world.recharger)
+                    dist_recarga = distancia_real(world.recharger)
                     if self.battery >= dist_recarga:
                         return world.recharger
 
-            # 2. Se não pode entregar, tenta recarregar
-            if world.recharger and caminho_valido(world.recharger):
-                dist_recarga = distancia_para(world.recharger)
-                if self.battery < 30:  # Se a bateria estiver abaixo de 30%
-                    return world.recharger
-
-            # 3. Se não pode fazer nada, fica parado
-            return list(current_pos)
-        # Se não tiver pacotes - Prioridade de coleta
+        # 2. Se não tem pacotes, coleta o melhor pacote
         if world.packages:
-            pacotes_validos = [p for p in world.packages if caminho_valido(p)]
-
-            if pacotes_validos:
-                pacote = min(pacotes_validos, key=lambda p: distancia_para(p))
-                dist_pacote = distancia_para(pacote)
+            melhor_pacote = melhor_alvo(world.packages, "coleta")
+            if melhor_pacote:
+                dist_pacote = distancia_real(melhor_pacote)
 
                 # Calcula energia necessária: ir até o pacote + possível entrega
-                energia_necessaria = dist_pacote + 20  # Margem para entrega futura
-
-                if self.battery >= energia_necessaria:
-                    return pacote
-
-                # Se não tem energia, verifica recarga
+                if self.battery >= dist_pacote:
+                    return melhor_pacote
+                # Se não tem bateria, tenta recarregar
                 elif world.recharger and caminho_valido(world.recharger):
-                    dist_recarga = distancia_para(world.recharger)
+                    dist_recarga = distancia_real(world.recharger)
                     if self.battery >= dist_recarga:
                         return world.recharger
 
-            return list(current_pos)  # Fica parado se não puder coletar
-
-        # Recarga emergencial (bateria <= 30%)
-        if self.battery <= 30 and world.recharger and caminho_valido(world.recharger):
-            dist_recarga = distancia_para(world.recharger)
+        # 3. Recarga emergencial (bateria baixa)
+        if (
+            self.battery <= self.max_battery * 0.3
+            and world.recharger
+            and caminho_valido(world.recharger)
+        ):
+            dist_recarga = distancia_real(world.recharger)
             if self.battery >= dist_recarga:
                 return world.recharger
 
-        return None
+        # 4. Se não há nada para fazer, fica parado
+        return list(current_pos)
 
 
 # ==========================
@@ -347,7 +368,7 @@ class Maze:
         self.running = True
         self.score = 0
         self.steps = 0
-        self.delay = 100
+        self.delay = 300
         self.path = []
         self.num_deliveries = 0  # contagem de entregas realizadas
 
@@ -473,7 +494,7 @@ class Maze:
 def main():
     pygame.init()
 
-    maze = Maze(seed=42)  # ou 5 para outro layout
+    maze = Maze(seed=5)  # ou 5 para outro layout
     maze.game_loop()  # Inicia o loop do jogo
 
     pygame.quit()
