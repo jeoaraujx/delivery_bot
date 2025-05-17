@@ -114,20 +114,46 @@ class DefaultPlayer(BasePlayer):
             alvos_com_pontuacao.sort(key=lambda x: (-x[0], x[1]))
             return alvos_com_pontuacao[0][2]
 
-        # 1. Se tiver pacotes, prioriza entregar
         if self.cargo:
             melhor_entrega = melhor_alvo(world.goals, "entrega")
             if melhor_entrega:
                 dist_entrega = distancia_real(melhor_entrega)
 
-                # Verifica se tem bateria suficiente
-                if self.battery >= dist_entrega:
+                # Calcula bateria necessária: entrega + margem de segurança (10 unidades)
+                # ou entrega + caminho para recarregar
+                bateria_necessaria = dist_entrega
+
+                # Se tiver recarregador, calcula o caminho mais eficiente
+                if world.recharger and caminho_valido(world.recharger):
+                    dist_recarga_pos_entrega = distancia_real(world.recharger)
+                    # Verifica se pode entregar e ainda chegar no recarregador
+                    if self.battery >= dist_entrega + dist_recarga_pos_entrega:
+                        return melhor_entrega
+                    # Se não conseguir, verifica se é melhor recarregar primeiro
+                    elif caminho_valido(world.recharger):
+                        dist_recarga = distancia_real(world.recharger)
+                        if self.battery >= dist_recarga:
+                            # Verifica se depois de recarregar pode fazer a entrega
+                            bateria_pos_recarga = self.max_battery - dist_recarga
+                            if bateria_pos_recarga >= dist_entrega:
+                                return world.recharger
+
+                # Se não tem recarregador ou não pode usá-lo, verifica entrega direta
+                # com margem de segurança (10 unidades)
+                if self.battery >= dist_entrega + 10:
                     return melhor_entrega
-                # Se não tem bateria, tenta recarregar primeiro
-                elif world.recharger and caminho_valido(world.recharger):
+
+                # Se não tem bateria para nada, tenta recarregar se possível
+                if world.recharger and caminho_valido(world.recharger):
                     dist_recarga = distancia_real(world.recharger)
                     if self.battery >= dist_recarga:
                         return world.recharger
+
+            # Se não encontrou entrega válida ou não tem bateria, tenta recarregar
+            if world.recharger and caminho_valido(world.recharger):
+                dist_recarga = distancia_real(world.recharger)
+                if self.battery >= dist_recarga:
+                    return world.recharger
 
         # 2. Se não tem pacotes, coleta o melhor pacote
         if world.packages:
