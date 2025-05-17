@@ -118,6 +118,7 @@ class DefaultPlayer(BasePlayer):
             melhor_entrega = melhor_alvo(world.goals, "entrega")
             if melhor_entrega:
                 dist_entrega = distancia_real(melhor_entrega)
+                dist_recarga = distancia_real(world.recharger)
 
                 # Define a bateria necessária considerando diferentes cenários
                 bateria_necessaria = dist_entrega  # Mínimo para entregar
@@ -130,6 +131,8 @@ class DefaultPlayer(BasePlayer):
                     # Pode fazer a entrega completa (entrega + recarga depois)?
                     if self.battery >= bateria_necessaria:
                         return melhor_entrega
+
+                    return world.recharger
 
                 # Cenário alternativo 1: entregar com margem de segurança (10 unidades)
                 if self.battery >= dist_entrega + 10:
@@ -148,10 +151,6 @@ class DefaultPlayer(BasePlayer):
                         if bateria_pos_recarga >= dist_apos_recarga:
                             return world.recharger
 
-                # Último recurso: tentar entregar mesmo com bateria mínima
-                if self.battery >= dist_entrega:
-                    return melhor_entrega
-
             # Se não encontrou entrega válida ou não tem bateria suficiente
             if world.recharger and caminho_valido(world.recharger):
                 dist_recarga = distancia_real(world.recharger)
@@ -164,27 +163,71 @@ class DefaultPlayer(BasePlayer):
             if melhor_pacote:
                 dist_pacote = distancia_real(melhor_pacote)
 
-                # Calcula energia necessária: ir até o pacote + possível entrega
+                # 1. Verifica se pode completar todo o ciclo (coletar + entregar + recarregar)
+                if world.goals and world.recharger and caminho_valido(world.recharger):
+                    # Encontra o goal mais próximo após coleta
+                    melhor_goal = melhor_alvo(world.goals, "entrega")
+                    if melhor_goal:
+                        dist_goal = distancia_real(melhor_goal)
+                        dist_recarga = distancia_real(world.recharger)
+
+                        # Calcula bateria para ciclo completo
+                        bateria_ciclo_completo = dist_pacote + dist_goal + dist_recarga
+
+                        if self.battery >= bateria_ciclo_completo:
+                            return melhor_pacote
+
+                # 2. Verifica se pode coletar e entregar (pelo menos)
+                if world.goals:
+                    melhor_goal = melhor_alvo(world.goals, "entrega")
+                    if melhor_goal:
+                        dist_goal = distancia_real(melhor_goal)
+
+                        # Bateria para coletar + entregar + margem de segurança
+                        bateria_parcial = dist_pacote + dist_goal + 10
+
+                        if self.battery >= bateria_parcial:
+                            return melhor_pacote
+
+                # 3. Verifica se pode apenas coletar com segurança
+                if self.battery >= dist_pacote + 15:  # Margem generosa
+                    return melhor_pacote
+
+                # 4. Se não pode coletar com segurança, tenta recarregar
+                if world.recharger and caminho_valido(world.recharger):
+                    dist_recarga = distancia_real(world.recharger)
+
+                    # Verifica se pode recarregar e depois completar o ciclo
+                    if self.battery >= dist_recarga:
+                        # Calcula bateria após recarga
+                        bateria_pos_recarga = self.max_battery
+
+                        # Verifica se pode completar coleta + entrega após recarga
+                        if melhor_goal:
+                            if bateria_pos_recarga >= distancia_real(
+                                melhor_pacote
+                            ) + distancia_real(melhor_goal):
+                                return world.recharger
+
+                        # Ou pelo menos coletar com segurança
+                        if bateria_pos_recarga >= dist_pacote + 10:
+                            return world.recharger
+
+                # 5. Último recurso: coletar mesmo com bateria mínima
                 if self.battery >= dist_pacote:
                     return melhor_pacote
-                # Se não tem bateria, tenta recarregar
-                elif world.recharger and caminho_valido(world.recharger):
-                    dist_recarga = distancia_real(world.recharger)
-                    if self.battery >= dist_recarga:
-                        return world.recharger
+
+            # Se não encontrou pacote válido ou não tem bateria suficiente
+            if world.recharger and caminho_valido(world.recharger):
+                dist_recarga = distancia_real(world.recharger)
+                if self.battery >= dist_recarga:
+                    return world.recharger
 
         # 3. Recarga emergencial (bateria baixa)
-        if (
-            self.battery <= self.max_battery * 0.3
-            and world.recharger
-            and caminho_valido(world.recharger)
-        ):
+        if self.battery <= 30 and world.recharger and caminho_valido(world.recharger):
             dist_recarga = distancia_real(world.recharger)
             if self.battery >= dist_recarga:
                 return world.recharger
-
-        # 4. Se não há nada para fazer, fica parado
-        return list(current_pos)
 
 
 # ==========================
@@ -397,7 +440,7 @@ class Maze:
         self.running = True
         self.score = 0
         self.steps = 0
-        self.delay = 300
+        self.delay = 100
         self.path = []
         self.num_deliveries = 0  # contagem de entregas realizadas
 
