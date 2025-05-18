@@ -1,2 +1,5 @@
 .venv/
 delivery-bot-v09/
+/src/assets/*.analise_resultados.png
+/src/assets/*.analise_evolucao_score.png
+/src/assets/*.simulation_results.csv

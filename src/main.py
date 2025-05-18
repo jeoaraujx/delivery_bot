@@ -3,10 +3,15 @@ import random
 import heapq
 import sys
 from abc import ABC, abstractmethod
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tqdm import tqdm
+import numpy as np
 
 
 # ==========================
-# CLASSES DE PLAYER
+# CLASSES DE PLAYER (mantidas iguais)
 # ==========================
 class BasePlayer(ABC):
     def __init__(self, start_pos, max_battery=70):
@@ -39,9 +44,9 @@ class BasePlayer(ABC):
 
 
 class DefaultPlayer(BasePlayer):
-    def __init__(self, position, max_capacity=5):  # Adicionado max_capacity
+    def __init__(self, position, max_capacity=5):
         super().__init__(position)
-        self.max_capacity = max_capacity  # Capacidade máxima de pacotes
+        self.max_capacity = max_capacity
 
     def move_to(self, new_pos):
         self.position = new_pos
@@ -63,14 +68,13 @@ class DefaultPlayer(BasePlayer):
         return False
 
     def deliver_packages(self, goal_positions):
-        """Entrega os pacotes que estão nas posições de entrega especificadas"""
         for goal_pos in goal_positions:
             if self.position == goal_pos and self.cargo:
                 num_delivered = len(self.cargo)
                 self.delivered_packages.extend(self.cargo)
                 self.score += 50 * num_delivered
                 self.cargo = []
-                return goal_pos  # Retorna a posição onde entregou
+                return goal_pos
         return None
 
     def escolher_alvo(self, world):
@@ -94,8 +98,8 @@ class DefaultPlayer(BasePlayer):
                 custo = dist
                 if prioridade == "entrega":
                     ganho = 50 * len(self.cargo)
-                else:  # coleta
-                    ganho = 50  # potencial de entrega futura
+                else:
+                    ganho = 50
 
                 if self.battery < dist:
                     if world.recharger and caminho_valido(world.recharger):
@@ -116,21 +120,15 @@ class DefaultPlayer(BasePlayer):
             alvos_com_pontuacao.sort(key=lambda x: (-x[0], x[1]))
             return alvos_com_pontuacao[0][2]
 
-        # Se já tem carga, verifica se pode coletar mais pacotes antes de entregar
         if self.cargo and len(self.cargo) < self.max_capacity:
-            # Calcula rota: posição atual -> pacote próximo -> entrega mais próxima
             for pkg in world.packages:
-                if pkg not in self.cargo:  # Não tentar pegar pacote já coletado
+                if pkg not in self.cargo:
                     dist_pacote = distancia_real(pkg)
-
-                    # Encontra a entrega mais próxima após pegar o pacote
                     melhor_entrega = melhor_alvo(world.goals, "entrega")
                     if melhor_entrega:
                         dist_entrega = len(
                             maze.astar(tuple(pkg), tuple(melhor_entrega))
                         )
-
-                        # Verifica se tem bateria para: ir ao pacote -> ir à entrega -> (opcional) ir ao recarregador
                         bateria_necessaria = dist_pacote + dist_entrega
                         if world.recharger:
                             dist_recarga = len(
@@ -141,7 +139,7 @@ class DefaultPlayer(BasePlayer):
                             bateria_necessaria += dist_recarga
 
                         if self.battery >= bateria_necessaria:
-                            return pkg  # Vale a pena pegar mais um pacote antes de entregar
+                            return pkg
 
         if self.cargo:
             melhor_entrega = melhor_alvo(world.goals, "entrega")
@@ -156,7 +154,6 @@ class DefaultPlayer(BasePlayer):
                 elif world.recharger and caminho_valido(world.recharger):
                     return world.recharger
 
-        # Se não tem pacotes ou ainda tem capacidade, coleta o melhor pacote
         if world.packages and len(self.cargo) < self.max_capacity:
             melhor_pacote = melhor_alvo(world.packages, "coleta")
             if melhor_pacote:
@@ -181,7 +178,7 @@ class DefaultPlayer(BasePlayer):
 
 
 # ==========================
-# CLASSE WORLD (MUNDO)
+# CLASSE WORLD (mantida igual)
 # ==========================
 class World:
     def __init__(self, seed=None):
@@ -282,7 +279,7 @@ class World:
                 and [x, y] not in self.packages
                 and [x, y] not in self.goals
             ):
-                return DefaultPlayer([x, y], max_capacity=5)  # Capacidade padrão 3
+                return DefaultPlayer([x, y], max_capacity=5)
 
     def generate_recharger(self):
         center = self.maze_size // 2
@@ -347,10 +344,11 @@ class World:
 
 
 # ==========================
-# CLASSE MAZE
+# CLASSE MAZE (modificada para análise)
 # ==========================
 class Maze:
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, headless=False):
+        self.seed = seed
         self.world = World(seed)
         self.world.maze = self
         self.running = True
@@ -359,6 +357,7 @@ class Maze:
         self.delay = 100
         self.path = []
         self.num_deliveries = 0
+        self.headless = headless
 
     def heuristic(self, a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -443,8 +442,9 @@ class Maze:
                     self.world.player.recharge()
                     print("[[Bateria recarregada!]]")
 
-                self.world.draw_world(self.path)
-                pygame.time.wait(self.delay)
+                if not self.headless:
+                    self.world.draw_world(self.path)
+                    pygame.time.wait(self.delay)
 
             if self.world.player.position == target:
                 if target in self.world.packages:
@@ -481,16 +481,144 @@ class Maze:
                 f"Bateria: {self.world.player.battery}, Entregas: {self.num_deliveries}]"
             )
 
+        return {
+            "seed": self.seed,
+            "steps": self.steps,
+            "score": self.world.player.score,
+            "final_battery": self.world.player.battery,
+            "deliveries": self.num_deliveries,
+            "max_capacity": self.world.player.max_capacity,
+            "battery_efficiency": (
+                self.steps / self.world.player.max_battery
+                if self.world.player.max_battery > 0
+                else 0
+            ),
+            "delivery_efficiency": (
+                self.num_deliveries / self.steps if self.steps > 0 else 0
+            ),
+        }
+
+
+# ==========================
+# CLASSE DE ANÁLISE ESTATÍSTICA
+# ==========================
+class SimulationAnalyzer:
+    def __init__(self, num_simulations=100):
+        self.num_simulations = num_simulations
+        self.results = []
+
+    def run_simulations(self):
+        for seed in tqdm(range(self.num_simulations), desc="Running simulations"):
+            try:
+                maze = Maze(seed=seed, headless=True)
+                result = maze.game_loop()
+                self.results.append(result)
+            except Exception as e:
+                print(f"Error with seed {seed}: {str(e)}")
+
+        return pd.DataFrame(self.results)
+
+    def analyze_results(self, df):
+        print("\n=== Estatísticas Descritivas ===")
+        print(df.describe())
+
+        print("\n=== Matriz de Correlação ===")
+        corr_matrix = df.corr()
+        print(corr_matrix)
+
+        return corr_matrix
+
+    def plot_results(self, df):
+        plt.figure(figsize=(15, 10))
+
+        # Gráfico 1
+        plt.subplot(2, 2, 1)
+        sns.histplot(df["score"], bins=20, kde=True)
+        plt.title("Distribuição de Pontuações")
+        plt.axvline(
+            df["score"].max(),
+            color="r",
+            linestyle="--",
+            label=f'Max: {df["score"].max()}',
+        )
+        plt.legend()
+
+        # Gráfico 2
+        plt.subplot(2, 2, 2)
+        sns.scatterplot(data=df, x="steps", y="score", hue="deliveries")
+        plt.title("Passos vs Pontuação")
+
+        # Gráfico 3
+        plt.subplot(2, 2, 3)
+        sns.lineplot(data=df.sort_values("score"), x=range(len(df)), y="deliveries")
+        plt.title("Entregas por Simulação (Ordenado por Score)")
+
+        # Gráfico 4
+        plt.subplot(2, 2, 4)
+        sns.heatmap(df.corr(), annot=True, cmap="coolwarm")
+        plt.title("Matriz de Correlação")
+
+        plt.tight_layout()
+        plt.savefig("./assets/analise_resultados.png")  # Salva em vez de mostrar
+        plt.close()
+
+        # Gráfico adicional
+        plt.figure(figsize=(10, 6))
+        df_sorted = df.sort_values("score")
+        df_sorted["cumulative_max"] = df_sorted["score"].cummax()
+        plt.plot(df_sorted["score"], label="Score por Seed")
+        plt.plot(
+            df_sorted["cumulative_max"],
+            label="Upper Bound de Score",
+            linestyle="--",
+            color="r",
+        )
+        plt.xlabel("Seed")
+        plt.ylabel("Pontuação")
+        plt.title("Evolução do Upper Bound de Pontuação")
+        plt.legend()
+        plt.savefig("./assets/evolucao_score.png")  # Salva em vez de mostrar
+        plt.close()
+
+        print("\nGráficos salvos como 'analise_resultados.png' e 'evolucao_score.png'")
+
+    def find_optimal_parameters(self, df):
+        top_5 = df.nlargest(5, "score")
+        print("\n=== Top 5 Melhores Execuções ===")
+        print(top_5)
+
+        max_deliveries = df["deliveries"].max()
+        theoretical_upper_bound = max_deliveries * 50
+        actual_upper_bound = df["score"].max()
+
+        print(f"\nUpper Bound Teórico: {theoretical_upper_bound}")
+        print(f"Upper Bound Alcançado: {actual_upper_bound}")
+        print(f"Eficiência: {actual_upper_bound/theoretical_upper_bound:.2%}")
+
+        return top_5
+
 
 # ==========================
 # PONTO DE ENTRADA PRINCIPAL
 # ==========================
 def main():
-    pygame.init()
-    maze = Maze(seed=5)
-    maze.game_loop()
-    pygame.quit()
-    sys.exit()
+    # Modo padrão: execução normal com visualização
+    if len(sys.argv) == 1:
+        pygame.init()
+        maze = Maze(seed=5)
+        maze.game_loop()
+        pygame.quit()
+        sys.exit()
+
+    # Modo análise: execução múltipla sem visualização
+    elif sys.argv[1] == "--analyze":
+        num_simulations = 100 if len(sys.argv) < 3 else int(sys.argv[2])
+        analyzer = SimulationAnalyzer(num_simulations)
+        results_df = analyzer.run_simulations()
+        results_df.to_csv("./assets/simulation_results.csv", index=False)
+        corr_matrix = analyzer.analyze_results(results_df)
+        analyzer.plot_results(results_df)
+        top_performers = analyzer.find_optimal_parameters(results_df)
 
 
 if __name__ == "__main__":
