@@ -3,6 +3,8 @@ import random
 import heapq
 import sys
 from abc import ABC, abstractmethod
+import matplotlib.pyplot as plt
+from concurrent.futures import ThreadPoolExecutor
 
 
 # ==========================
@@ -560,18 +562,54 @@ class Maze:
             )
 
 
+seeds = random.sample(range(1, 1000), 35)
+resultados = {
+    'seed': [],
+    'passos': [],
+    'cargo': [],
+    'pontuacao': [],
+    'bateria': []
+}
+
+# Função para executar o simulador
+def executar_simulador(seed):
+    print(f'Executando com seed: {seed}')
+    maze = Maze(seed=seed)
+    maze.game_loop()
+    if maze.num_deliveries == 5:
+        resultados['seed'].append(seed)
+        resultados['passos'].append(maze.steps)
+        resultados['cargo'].append(maze.world.player.cargo)
+        resultados['pontuacao'].append(maze.world.player.score)
+        resultados['bateria'].append(maze.world.player.battery)
+        
+        
 # ==========================
 # PONTO DE ENTRADA PRINCIPAL
 # ==========================
 def main():
-    pygame.init()
 
-    maze = Maze(seed=5)  # ou 5 para outro layout
-    maze.game_loop()  # Inicia o loop do jogo
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        executor.map(executar_simulador, seeds)
+    
+    if resultados['seed']:
+        plt.figure(figsize=(10, 6))
+        plt.plot(resultados['seed'], resultados['passos'], marker='o', label='Passos')
+        plt.plot(resultados['seed'], resultados['pontuacao'], marker='s', label='Pontuação')
+        plt.plot(resultados['seed'], resultados['bateria'], marker='^', label='Bateria')
+        plt.xlabel('Seed')
+        plt.ylabel('Valores')
+        plt.title('Resultados do Simulador para Entregas = 5')
+        plt.legend()
+        plt.grid(True)
+        
+        # Salvando o gráfico como imagem
+        plt.savefig('resultados_simulador.png', dpi=300)
+        print("Gráfico salvo como 'resultados_simulador.png'.")
+        
+        plt.show()
+    else:
+        print("Nenhum resultado válido para exibir.")
 
-    pygame.quit()
-    sys.exit()
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
