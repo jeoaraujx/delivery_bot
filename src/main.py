@@ -518,69 +518,214 @@ class SimulationAnalyzer:
 
         return pd.DataFrame(self.results)
 
-    def analyze_results(self, df):
-        print("\n=== Estatísticas Descritivas ===")
-        print(df.describe())
-
-        print("\n=== Matriz de Correlação ===")
-        corr_matrix = df.corr()
-        print(corr_matrix)
-
-        return corr_matrix
-
     def plot_results(self, df):
-        plt.figure(figsize=(15, 10))
+        # Configurações gerais
+        plt.style.use("seaborn-v0_8")
+        plt.rcParams["figure.autolayout"] = True
+        colors = ["#3498db", "#e74c3c", "#2ecc71"]
 
-        # Gráfico 1
-        plt.subplot(2, 2, 1)
-        sns.histplot(df["score"], bins=20, kde=True)
-        plt.title("Distribuição de Pontuações")
+        # Ordena por seed para melhor visualização
+        df = df.sort_values("seed")
+
+        # Define a capacidade máxima da bateria (fixa em 100 conforme seu código)
+        max_battery = 100
+
+        # =============================================
+        # 1. QUANTIDADE DE PASSOS POR SEED
+        # =============================================
+        plt.figure(figsize=(14, 6))
+        bars = plt.bar(df["seed"].astype(str), df["steps"], color=colors[0], alpha=0.8)
+
+        # Adiciona os valores exatos nas barras
+        for bar in bars:
+            height = bar.get_height()
+            plt.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                f"{int(height)}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+        plt.xlabel("Seed", fontsize=12)
+        plt.ylabel("Quantidade de Passos", fontsize=12)
+        plt.title("Passos Necessários por Seed (35 Simulações)", fontsize=14, pad=20)
+        plt.xticks(rotation=45)
+        plt.grid(axis="y", alpha=0.3)
+        plt.savefig("./assets/passos_por_seed.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        # =============================================
+        # 2. PONTUAÇÃO POR SEED
+        # =============================================
+        plt.figure(figsize=(14, 6))
+
+        # Gráfico de linha com pontos destacados
+        (line,) = plt.plot(
+            df["seed"].astype(str),
+            df["score"],
+            marker="o",
+            markersize=8,
+            color=colors[1],
+            linewidth=2.5,
+            alpha=0.8,
+            label="Todas as Seeds",
+        )
+
+        # Identifica top 3 pontuações
+        top_3 = df.nlargest(3, "score").sort_values("score", ascending=False)
+        top_labels = [
+            f"Top {i}: Seed {int(row['seed'])} ({int(row['score'])} pts)"
+            for i, (_, row) in enumerate(top_3.iterrows(), start=1)
+        ]
+
+        # Cria um patch invisível para a legenda
+        from matplotlib.patches import Patch
+
+        invisible_patch = Patch(visible=False)
+
+        # Configurações do gráfico
+        plt.xlabel("Seed", fontsize=12)
+        plt.ylabel("Pontuação", fontsize=12)
+        plt.title("Pontuação Alcançada por Seed (35 Simulações)", fontsize=14, pad=20)
+        plt.xticks(rotation=45)
+        plt.grid(alpha=0.3)
+
+        # Legenda principal
+        first_legend = plt.legend(handles=[line], loc="upper left")
+        ax = plt.gca()
+        ax.add_artist(first_legend)
+
+        # Legenda das top seeds sem marcadores visíveis
+        plt.legend(
+            handles=[invisible_patch] * 3,
+            labels=top_labels,
+            loc="lower right",
+            title="Melhores Seeds:",
+            handlelength=0,
+            handletextpad=0,
+        )
+
+        plt.savefig("./assets/pontuacao_por_seed.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        #########################################
+
+        plt.figure(figsize=(14, 10))
+
+        # Ordenar por quantidade de passos (do maior para o menor)
+        df = df.sort_values("steps", ascending=True)
+
+        # Criar as barras horizontais
+        bars = plt.barh(
+            df["seed"].astype(str),
+            df["final_battery"],
+            color="#2ecc71",
+            alpha=0.7,
+            label="Bateria Restante",
+        )
+
+        # Adicionar os valores de passos no final de cada barra
+        for i, (bar, steps) in enumerate(zip(bars, df["steps"])):
+            plt.text(bar.get_width() + 1, i, f"{steps} passos", va="center", fontsize=9)
+
+        # Linha de nível crítico
         plt.axvline(
-            df["score"].max(),
-            color="r",
-            linestyle="--",
-            label=f'Max: {df["score"].max()}',
+            x=30, color="red", linestyle="--", linewidth=2, label="Nível Crítico (30%)"
         )
-        plt.legend()
 
-        # Gráfico 2
-        plt.subplot(2, 2, 2)
-        sns.scatterplot(data=df, x="steps", y="score", hue="deliveries")
-        plt.title("Passos vs Pontuação")
+        # Configurações do gráfico
+        plt.xlabel("Bateria Restante (%)", fontsize=12)
+        plt.ylabel("Seed", fontsize=12)
+        plt.title(
+            "Bateria Restante vs Quantidade de Passos por Seed", fontsize=14, pad=20
+        )
 
-        # Gráfico 3
-        plt.subplot(2, 2, 3)
-        sns.lineplot(data=df.sort_values("score"), x=range(len(df)), y="deliveries")
-        plt.title("Entregas por Simulação (Ordenado por Score)")
+        # Adicionar eficiência como texto adicional
+        for i, (_, row) in enumerate(df.iterrows()):
+            eff = row["delivery_efficiency"]
+            plt.text(
+                5,
+                i,
+                f"Eff: {eff:.2f}",
+                va="center",
+                fontsize=8,
+                bbox=dict(facecolor="white", alpha=0.7),
+            )
 
-        # Gráfico 4
-        plt.subplot(2, 2, 4)
-        sns.heatmap(df.corr(), annot=True, cmap="coolwarm")
-        plt.title("Matriz de Correlação")
+        # Legenda no canto superior direito
+        plt.legend(loc="upper right", bbox_to_anchor=(1, 0.95))
 
+        # Grid e ajustes finais
+        plt.grid(axis="x", alpha=0.3)
+        plt.xlim(0, 100)  # Limite fixo para bateria (0-100%)
         plt.tight_layout()
-        plt.savefig("./assets/analise_resultados.png")  # Salva em vez de mostrar
-        plt.close()
 
-        # Gráfico adicional
-        plt.figure(figsize=(10, 6))
-        df_sorted = df.sort_values("score")
-        df_sorted["cumulative_max"] = df_sorted["score"].cummax()
-        plt.plot(df_sorted["score"], label="Score por Seed")
-        plt.plot(
-            df_sorted["cumulative_max"],
-            label="Upper Bound de Score",
-            linestyle="--",
-            color="r",
+        plt.savefig(
+            "./assets/bateria_vs_passos_horizontal.png", dpi=300, bbox_inches="tight"
         )
-        plt.xlabel("Seed")
-        plt.ylabel("Pontuação")
-        plt.title("Evolução do Upper Bound de Pontuação")
-        plt.legend()
-        plt.savefig("./assets/evolucao_score.png")  # Salva em vez de mostrar
         plt.close()
 
-        print("\nGráficos salvos como 'analise_resultados.png' e 'evolucao_score.png'")
+        # =============================================
+        # 3. BATERIA RESTANTE POR SEED
+        # =============================================
+        plt.figure(figsize=(14, 6))
+
+        # Calcula a bateria usada (assumindo max_battery = 100)
+        df["battery_used"] = max_battery - df["final_battery"]
+
+        plt.bar(
+            df["seed"].astype(str),
+            df["final_battery"],
+            color=colors[2],
+            label="Bateria Restante",
+            alpha=0.8,
+        )
+        plt.bar(
+            df["seed"].astype(str),
+            df["battery_used"],
+            bottom=df["final_battery"],
+            color="#95a5a6",
+            label="Bateria Consumida",
+            alpha=0.6,
+        )
+
+        # Linha de bateria crítica
+        plt.axhline(
+            y=30,
+            color="red",
+            linestyle="--",
+            linewidth=1.5,
+            label="Nível Crítico (30%)",
+        )
+
+        # Anotações
+        for seed, battery in zip(df["seed"].astype(str), df["final_battery"]):
+            plt.text(
+                seed,
+                battery / 2,
+                f"{int(battery)}%",
+                ha="center",
+                va="center",
+                color="white",
+                fontweight="bold",
+            )
+
+        plt.xlabel("Seed", fontsize=12)
+        plt.ylabel("Bateria Restante (%)", fontsize=12)
+        plt.title("Bateria Residual por Seed (35 Simulações)", fontsize=14, pad=20)
+        plt.xticks(rotation=45)
+        plt.legend(loc="upper right")
+        plt.grid(axis="y", alpha=0.3)
+        plt.savefig("./assets/bateria_por_seed.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print("\nGráficos gerados com sucesso:")
+        print("- passos_por_seed.png")
+        print("- pontuacao_por_seed.png")
+        print("- bateria_por_seed.png")
+        print("- bateria_vs_passos.png'")
 
     def find_optimal_parameters(self, df):
         top_5 = df.nlargest(5, "score")
@@ -616,9 +761,8 @@ def main():
         analyzer = SimulationAnalyzer(num_simulations)
         results_df = analyzer.run_simulations()
         results_df.to_csv("./assets/simulation_results.csv", index=False)
-        corr_matrix = analyzer.analyze_results(results_df)
         analyzer.plot_results(results_df)
-        top_performers = analyzer.find_optimal_parameters(results_df)
+        analyzer.find_optimal_parameters(results_df)
 
 
 if __name__ == "__main__":
